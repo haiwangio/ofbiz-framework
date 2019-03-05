@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -81,6 +82,7 @@ import org.apache.ofbiz.service.GenericServiceException;
 import org.apache.ofbiz.service.LocalDispatcher;
 import org.apache.ofbiz.service.ModelService;
 import org.apache.ofbiz.service.ServiceUtil;
+import org.apache.ofbiz.webapp.WebAppCache;
 import org.apache.ofbiz.webapp.WebAppUtil;
 import org.apache.ofbiz.webapp.stats.VisitHandler;
 import org.apache.ofbiz.widget.model.ThemeFactory;
@@ -97,6 +99,7 @@ public class LoginWorker {
     public static final String securityProperties = "security.properties";
 
     private static final String keyValue = UtilProperties.getPropertyValue(securityProperties, "login.secret_key_string");
+    private static final WebAppCache webapps = WebAppCache.getShared();
 
     public static StringWrapper makeLoginUrl(PageContext pageContext) {
         return makeLoginUrl(pageContext, "checkLogin");
@@ -922,17 +925,17 @@ public class LoginWorker {
         Delegator delegator = (Delegator) request.getAttribute("delegator");
         HttpSession session = request.getSession();
         GenericValue userLogin = (GenericValue) session.getAttribute("userLogin");
-        ServletContext context = request.getServletContext();
+        String serverId = (String) request.getServletContext().getAttribute("_serverId");
         String applicationName = UtilHttp.getApplicationName(request);
-        WebappInfo webappInfo = ComponentConfig.getWebappInfo((String) context.getAttribute("_serverId"), applicationName);
+        Optional<WebappInfo> webappInfo = webapps.getWebappInfo(serverId, applicationName);
                 
         if (userLogin != null && 
-                ((webappInfo != null && webappInfo.isAutologinCookieUsed())
-                || webappInfo == null)) { // When using an empty mountpoint, ie using root as mountpoint. Beware: works only for 1 webapp!
+                // When using an empty mountpoint, ie using root as mountpoint. Beware: works only for 1 webapp!
+                webappInfo.map(WebappInfo::isAutologinCookieUsed).orElse(!webappInfo.isPresent())) {
             Cookie autoLoginCookie = new Cookie(getAutoLoginCookieName(request), userLogin.getString("userLoginId"));
             autoLoginCookie.setMaxAge(60 * 60 * 24 * 365);
             autoLoginCookie.setDomain(EntityUtilProperties.getPropertyValue("url", "cookie.domain", delegator));
-            autoLoginCookie.setPath("/" + applicationName);
+            autoLoginCookie.setPath(applicationName.equals("root") ? "/" : request.getContextPath());
             autoLoginCookie.setSecure(true);
             autoLoginCookie.setHttpOnly(true);
             response.addCookie(autoLoginCookie);
@@ -948,11 +951,13 @@ public class LoginWorker {
         Delegator delegator = (Delegator) request.getAttribute("delegator");
         HttpSession session = request.getSession();
         GenericValue userLogin = (GenericValue) session.getAttribute("userLogin");
+        String applicationName = UtilHttp.getApplicationName(request);
+        
         if (userLogin != null) {
             Cookie securedLoginIdCookie = new Cookie(getSecuredLoginIdCookieName(request), userLogin.getString("userLoginId"));
             securedLoginIdCookie.setMaxAge(-1);
             securedLoginIdCookie.setDomain(EntityUtilProperties.getPropertyValue("url", "cookie.domain", delegator));
-            securedLoginIdCookie.setPath("/" + UtilHttp.getApplicationName(request));
+            securedLoginIdCookie.setPath( applicationName.equals("root") ? "/" : request.getContextPath());
             securedLoginIdCookie.setSecure(true);
             securedLoginIdCookie.setHttpOnly(true);
             response.addCookie(securedLoginIdCookie);
@@ -1052,10 +1057,11 @@ public class LoginWorker {
         // remove the cookie
         if (userLogin != null) {
             Delegator delegator = (Delegator) request.getAttribute("delegator");
+            String applicationName = UtilHttp.getApplicationName(request);
             Cookie autoLoginCookie = new Cookie(getAutoLoginCookieName(request), userLogin.getString("userLoginId"));
             autoLoginCookie.setMaxAge(0);
             autoLoginCookie.setDomain(EntityUtilProperties.getPropertyValue("url", "cookie.domain", delegator));
-            autoLoginCookie.setPath("/" + UtilHttp.getApplicationName(request));
+            autoLoginCookie.setPath( applicationName.equals("root") ? "/" : request.getContextPath());
             response.addCookie(autoLoginCookie);
         }
         // remove the session attributes
@@ -1365,7 +1371,7 @@ public class LoginWorker {
      * user is authorized to access
      */
     public static Collection<ComponentConfig.WebappInfo> getAppBarWebInfos(Security security, GenericValue userLogin, String serverName, String menuName) {
-        Collection<ComponentConfig.WebappInfo> allInfos = ComponentConfig.getAppBarWebInfos(serverName, menuName);
+        Collection<ComponentConfig.WebappInfo> allInfos = webapps.getAppBarWebInfos(serverName, menuName);
         Collection<ComponentConfig.WebappInfo> allowedInfos = new ArrayList<ComponentConfig.WebappInfo>(allInfos.size());
         for (ComponentConfig.WebappInfo info : allInfos) {
             if (hasApplicationPermission(info, security, userLogin)) {

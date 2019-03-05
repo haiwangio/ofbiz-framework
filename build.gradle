@@ -23,22 +23,28 @@ import org.asciidoctor.gradle.AsciidoctorTask
 /* ========================================================
  * Project setup
  * ======================================================== */
-buildscript {
-    repositories {
-        jcenter()
-    }
-    dependencies {
-        classpath 'at.bxm.gradleplugins:gradle-svntools-plugin:latest.release'
-        classpath 'org.asciidoctor:asciidoctor-gradle-plugin:1.5.8.1' // Rather than using 1.5.9.2 see OFBIZ-10693
-        classpath 'org.asciidoctor:asciidoctorj-pdf:1.5.0-alpha.16'
+plugins {
+    id 'java'
+    id 'groovy'
+    id 'eclipse'
+    id 'maven-publish'
+    id 'at.bxm.svntools' version '2.2.1'
+    id 'org.asciidoctor.convert' version '1.5.8.1'  // Rather than using 1.5.9.2 see OFBIZ-10693
+}
+
+/* OWASP plugin
+ *
+ * If project property "enableOwasp" is flagged then
+ * gradle will download required dependencies and
+ * activate Gradle's OWASP plugin and its related tasks.
+ *
+ * Syntax: gradlew -PenableOwasp dependencyCheckAnalyze
+ */
+if (project.hasProperty('enableOwasp')) {
+    plugins {
+    id 'org.owasp.dependencycheck' version '3.0.2'
     }
 }
-apply plugin: 'java'
-apply plugin: 'groovy'
-apply plugin: 'eclipse'
-apply plugin: 'maven-publish'
-apply plugin: "at.bxm.svntools"
-apply plugin: 'org.asciidoctor.convert'
 
 apply from: 'common.gradle'
 
@@ -142,7 +148,7 @@ dependencies {
     compile 'org.apache.axis2:axis2-kernel:1.7.8'
     compile 'org.apache.commons:commons-collections4:4.2'
     compile 'org.apache.commons:commons-csv:1.6'
-    compile 'org.apache.commons:commons-dbcp2:2.5.0'
+    compile 'org.apache.commons:commons-dbcp2:2.5.0' // When changing for 2.6.1+ we can remove ManagedDataSource::close, see DBCP-539
     compile 'org.apache.geronimo.components:geronimo-transaction:3.1.4'
     compile 'org.apache.geronimo.specs:geronimo-jms_1.1_spec:1.1.1'
     compile 'org.apache.httpcomponents:httpclient-cache:4.5.6'
@@ -150,8 +156,8 @@ dependencies {
     compile 'org.apache.poi:poi:3.17'
     compile 'org.apache.shiro:shiro-core:1.4.0'
     compile 'org.apache.sshd:sshd-core:1.7.0'
-    compile 'org.apache.tika:tika-core:1.18'
-    compile 'org.apache.tika:tika-parsers:1.18'
+    compile 'org.apache.tika:tika-core:1.20'
+    compile 'org.apache.tika:tika-parsers:1.20'
     compile 'org.apache.tomcat:tomcat-catalina-ha:9.0.13'
     compile 'org.apache.tomcat:tomcat-catalina:9.0.13'
     compile 'org.apache.tomcat:tomcat-jasper:9.0.13'
@@ -174,6 +180,7 @@ dependencies {
     testCompile 'org.mockito:mockito-core:2.23.0'
 
     // ofbiz runtime libs
+    runtime 'javax.xml.soap:javax.xml.soap-api:1.4.0'
     runtime 'de.odysseus.juel:juel-spi:2.2.7'
     runtime 'net.sf.barcode4j:barcode4j-fop-ext:2.1'
     runtime 'net.sf.barcode4j:barcode4j:2.1'
@@ -198,6 +205,7 @@ dependencies {
     junitReport 'junit:junit:4.12'
     junitReport 'org.apache.ant:ant-junit:1.10.5'
     
+    asciidoctor 'org.asciidoctor:asciidoctorj-pdf:1.5.0-alpha.16'
     // bug workaround - see OFBIZ-9873
     asciidoctor 'org.jruby:jruby-complete:9.2.4.0' 
 
@@ -292,7 +300,7 @@ eclipse.classpath.file.whenMerged { classpath ->
      */
     def fileSep = System.getProperty("file.separator")
 
-    iterateOverActiveComponents { component ->
+    activeComponents().each { component ->
         def componentName = component.toString() - rootDir.toString() - fileSep
         def eclipseEntry = os.contains('windows') ? componentName.replaceAll("\\\\", "/") : componentName
 
@@ -310,25 +318,6 @@ eclipse.classpath.file.whenMerged { classpath ->
     }
 }
 tasks.eclipse.dependsOn(cleanEclipse)
-
-/* OWASP plugin
- *
- * If project property "enableOwasp" is flagged then
- * gradle will download required dependencies and
- * activate Gradle's OWASP plugin and its related tasks.
- *
- * Syntax: gradlew -PenableOwasp dependencyCheckAnalyze
- */
-buildscript {
-    if (project.hasProperty('enableOwasp')) {
-        dependencies {
-            classpath 'org.owasp:dependency-check-gradle:3.0.2'
-        }
-    }
-}
-if (project.hasProperty('enableOwasp')) {
-    apply plugin: 'org.owasp.dependencycheck'
-}
 
 /* ========================================================
  * Tasks
@@ -526,15 +515,11 @@ task deleteOfbizDocumentation {
 }
 
 task deletePluginDocumentation {
-    def activeComponents = []
-    iterateOverActiveComponents { component ->
-        activeComponents.add(component.name)
-    }
     doFirst {
         if (!project.hasProperty('pluginId')) {
             throw new GradleException('Missing property \"pluginId\"')
         }
-        if(!activeComponents.contains(pluginId)) {
+        if(!activeComponents().contains(pluginId)) {
             throw new GradleException("Could not find plugin with id ${pluginId}")
         }
         delete "${buildDir}/asciidoc/plugins/${pluginId}"
@@ -556,8 +541,9 @@ task generateOfbizDocumentation(group: docsGroup, type: AsciidoctorTask) {
 task generatePluginDocumentation(group: docsGroup) {
     dependsOn deletePluginDocumentation
     description 'Generate plugin documentation. Expects pluginId flag'
-    iterateOverActiveComponents { component ->
-        if (project.hasProperty('pluginId') && component.name == pluginId) {
+    activeComponents()
+        .findAll { project.hasProperty('pluginId') && it.name == pluginId }
+        .each { component ->
             def pluginAsciidoc = task "${component.name}Documentation" (type: AsciidoctorTask) {
                 def asciidocFolder = new File("${component}/src/docs/asciidoc")
                 if (asciidocFolder.exists()) {
@@ -577,7 +563,6 @@ task generatePluginDocumentation(group: docsGroup) {
             dependsOn pluginAsciidoc
             doLast { delete "${component}/src/docs/asciidoc/images/OFBiz-Logo.svg" }
         }
-    }
 }
 
 task generateAllPluginsDocumentation(group: docsGroup, 
@@ -585,7 +570,7 @@ task generateAllPluginsDocumentation(group: docsGroup,
         
     dependsOn deleteAllPluginsDocumentation
     file("${pluginsDir}").eachDir { plugin ->
-        iterateOverActiveComponents { component ->
+        activeComponents().each { component ->
             if (component.name == plugin.name) {
                 if (subprojectExists(":plugins:${plugin.name}")) {
                     // Note: the "-" between "component.name" and "Documentation" allows to differentiate from 
@@ -751,18 +736,16 @@ task installPlugin(group: ofbizPlugin, description: 'executes plugin install tas
     }
 
     if (project.hasProperty('pluginId')) {
-        iterateOverActiveComponents { component ->
-            if (component.name == pluginId) {
-                if (subprojectExists(":plugins:${pluginId}")) {
-                    if (taskExistsInproject(":plugins:${pluginId}", 'install')) {
-                        dependsOn ":plugins:${pluginId}:install"
-                        doLast { println "installed plugin ${pluginId}" }
-                    } else {
-                        doLast { println "No install task defined for plugin ${pluginId}, nothing to do" }
-                    }
+        activeComponents()
+            .findAll { it.name == pluginId }
+            .each { component ->
+                if (taskExistsInproject(":plugins:${pluginId}", 'install')) {
+                    dependsOn ":plugins:${pluginId}:install"
+                    doLast { println "installed plugin ${pluginId}" }
+                } else {
+                    doLast { println "No install task defined for plugin ${pluginId}, nothing to do" }
                 }
             }
-        }
     }
 }
 
@@ -910,18 +893,13 @@ task pullAllPluginsSource(group: ofbizPlugin,
     dependsOn pullPluginsFromSvn
 
     task installAllPlugins {
-        file("${pluginsDir}").eachDir { plugin ->
-            iterateOverActiveComponents { component ->
-                if (component.name == plugin.name) {
-                    if (subprojectExists(":plugins:${plugin.name}")) {
-                        if (taskExistsInproject(":plugins:${plugin.name}", 'install')) {
-                            dependsOn ":plugins:${plugin.name}:install"
-                            doLast { println "installed plugin ${plugin.name}" }
-                        }
-                    }
-                }
-            }
-        }
+        subdirs(file("${pluginsDir}"))
+            .filter(this.isComponentEnabled)
+            .filter { taskExistsInproject(":plugins:${it.name}", 'install') }
+            .forEach({ plugin ->
+                dependsOn ":plugins:${plugin.name}:install"
+                doLast { println "installed plugin ${plugin.name}" }
+            })
     }
     doLast {
         gradlewSubprocess(['installAllPlugins'])
@@ -1054,14 +1032,9 @@ def spawnProcess(command) {
 }
 
 def getDirectoryInActiveComponentsIfExists(String dirName) {
-    def dirInComponents = []
-    iterateOverActiveComponents { component ->
-        def subDir = file(component.toString() + '/' + dirName)
-        if (subDir.exists()) {
-            dirInComponents.add subDir
-        }
-    }
-    return dirInComponents
+    activeComponents()
+        .collect { file(it.toString() + '/' + dirName) }
+        .findAll { it.exists() }
 }
 
 def deleteAllInDirWithExclusions(dirName, exclusions) {
@@ -1099,9 +1072,7 @@ def getJarManifestClasspathForCurrentOs() {
 
 def subprojectExists(fullyQualifiedProject) {
     subprojects.stream()
-        .filter { it.path == fullyQualifiedProject.toString() }
-        .findAny()
-        .isPresent()
+        .anyMatch { it.path == fullyQualifiedProject.toString() }
 }
 
 def taskExistsInproject(fullyQualifiedProject, taskName) {

@@ -1323,7 +1323,7 @@ function submitPagination(obj, url) {
         }
     }
 }
-function loadJWT(webAppName) {
+function loadJWT() {
     var JwtToken = "";
     jQuery.ajax({
         url: "loadJWT",
@@ -1340,16 +1340,16 @@ function loadJWT(webAppName) {
     return JwtToken;
 }
 
-function sendJWT(webAppName, targetUrl) {
+function sendJWT(targetUrl) {
     var redirectUrl = targetUrl;
-    var jwtToken = loadJWT(webAppName); 
+    var jwtToken = loadJWT(); 
     if (jwtToken != null && jwtToken != "") {
         jQuery.ajax({
             url: targetUrl,
             async: false,
             type: 'POST',
             xhrFields: {withCredentials: true},
-            headers: {"Authorization" : jwtToken},
+            headers: {"Authorization" : "Bearer " + jwtToken},
             success: function(){
                 window.location.assign(redirectUrl);
             }

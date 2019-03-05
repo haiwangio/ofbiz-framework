@@ -37,40 +37,44 @@ import org.apache.ofbiz.service.config.model.ServiceLocation;
 public abstract class AbstractEngine implements GenericEngine {
 
     public static final String module = AbstractEngine.class.getName();
+    /** Map containing aliases for service implementation locations. */
     protected static final Map<String, String> locationMap = createLocationMap();
 
-    protected ServiceDispatcher dispatcher = null;
+    protected ServiceDispatcher dispatcher;
 
     protected AbstractEngine(ServiceDispatcher dispatcher) {
         this.dispatcher = dispatcher;
     }
 
-    // creates the location alias map
+    /**
+     * Instantiates the location map.
+     *
+     * @return an immutable location map.
+     */
     protected static Map<String, String> createLocationMap() {
-        Map<String, String> tmpMap = new HashMap<>();
-
-        List<ServiceLocation> locationsList = null;
+        Map<String, String> tmp = new HashMap<>();
+        List<ServiceLocation> locations;
         try {
-            locationsList = ServiceConfigUtil.getServiceEngine().getServiceLocations();
+            locations = ServiceConfigUtil.getServiceEngine().getServiceLocations();
         } catch (GenericConfigException e) {
             // FIXME: Refactor API so exceptions can be thrown and caught.
             Debug.logError(e, module);
             throw new RuntimeException(e.getMessage());
         }
-        for (ServiceLocation e: locationsList) {
-            tmpMap.put(e.getName(), e.getLocation());
-        }
-
-        Debug.logInfo("Loaded Service Locations: " + tmpMap, module);
-        return Collections.unmodifiableMap(tmpMap);
+        locations.forEach(loc -> tmp.put(loc.getName(), loc.getLocation()));
+        Debug.logInfo("Loaded Service Locations: " + tmp, module);
+        return Collections.unmodifiableMap(tmp);
     }
 
-    // uses the lookup map to determine if the location has been aliased by a service-location element in serviceengine.xml
+    /**
+     * Looks for location aliases which are set by {@code service-location} elements
+     * inside the {@code serviceengine.xml} configuration file.
+     *
+     * @param model  the object representing a service
+     * @return the actual location where to find the service implementation
+     */
     protected String getLocation(ModelService model) {
-        if (locationMap.containsKey(model.location)) {
-            return locationMap.get(model.location);
-        }
-        return model.location;
+        return locationMap.getOrDefault(model.location, model.location);
     }
 
     @Override

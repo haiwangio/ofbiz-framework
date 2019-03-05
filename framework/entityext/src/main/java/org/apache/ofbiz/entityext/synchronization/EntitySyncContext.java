@@ -302,11 +302,17 @@ public class EntitySyncContext {
     public void createInitialHistory() throws SyncDataErrorException, SyncServiceErrorException {
         String errorMsg = "Not running EntitySync [" + entitySyncId + "], could not create EntitySyncHistory";
         try {
-            Map<String, Object> initialHistoryRes = dispatcher.runSync("createEntitySyncHistory", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", "ESR_RUNNING", "beginningSynchTime", this.currentRunStartTime, "lastCandidateEndTime", this.currentRunEndTime, "userLogin", userLogin));
+            Timestamp startDateTime = UtilDateTime.nowTimestamp();
+            Map<String, Object> initialHistoryRes = dispatcher.runSync("createEntitySyncHistory", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", "ESR_RUNNING", "beginningSynchTime", this.currentRunStartTime, "lastCandidateEndTime", this.currentRunEndTime, "startDate", startDateTime, "userLogin", userLogin));
             if (ServiceUtil.isError(initialHistoryRes)) {
                 throw new SyncDataErrorException(errorMsg, null, null, initialHistoryRes, null);
             }
             this.startDate = (Timestamp) initialHistoryRes.get("startDate");
+
+            Map<String, Object> result = dispatcher.runSync("updateEntitySync", UtilMisc.toMap("entitySyncId", entitySyncId, "lastHistoryStartDate", this.startDate, "userLogin", userLogin),60,true);
+            if (ServiceUtil.isError(result)) {
+                throw new SyncDataErrorException(errorMsg, null, null, result, null);
+            }
         } catch (GenericServiceException e) {
             throw new SyncServiceErrorException(errorMsg, e);
         }
@@ -766,45 +772,53 @@ public class EntitySyncContext {
             this.totalRowsToRemove += this.toRemoveAlreadyDeleted + this.toRemoveDeleted;
 
             // store latest result on EntitySync, ie update lastSuccessfulSynchTime, should run in own tx
-            Map<String, Object> updateEsRunResult = dispatcher.runSync("updateEntitySyncRunning", UtilMisc.toMap("entitySyncId", entitySyncId, "lastSuccessfulSynchTime", this.currentRunEndTime, "userLogin", userLogin));
+            Map<String, Object> updateEsRunResult = dispatcher.runSync("updateEntitySync", UtilMisc.toMap("entitySyncId", entitySyncId, "lastSuccessfulSynchTime", this.currentRunEndTime, "userLogin", userLogin),60,true);
 
-            // store result of service call on history with results so far, should run in own tx
-            Map<String, Object> updateHistoryMap = UtilMisc.toMap("entitySyncId", entitySyncId, "startDate", startDate,
-                    "lastSuccessfulSynchTime", this.currentRunEndTime, "lastCandidateEndTime", this.getNextRunEndTime(),
-                    "lastSplitStartTime", this.splitStartTime);
-            updateHistoryMap.put("toCreateInserted", toCreateInserted);
-            updateHistoryMap.put("toCreateUpdated", toCreateUpdated);
-            updateHistoryMap.put("toCreateNotUpdated", toCreateNotUpdated);
-            updateHistoryMap.put("toStoreInserted", toStoreInserted);
-            updateHistoryMap.put("toStoreUpdated", toStoreUpdated);
-            updateHistoryMap.put("toStoreNotUpdated", toStoreNotUpdated);
-            updateHistoryMap.put("toRemoveDeleted", toRemoveDeleted);
-            updateHistoryMap.put("toRemoveAlreadyDeleted", toRemoveAlreadyDeleted);
-            updateHistoryMap.put("runningTimeMillis", runningTimeMillis);
-            updateHistoryMap.put("totalStoreCalls", totalStoreCalls);
-            updateHistoryMap.put("totalSplits", totalSplits);
-            updateHistoryMap.put("totalRowsExported", totalRowsExported);
-            updateHistoryMap.put("totalRowsToCreate", totalRowsToCreate);
-            updateHistoryMap.put("totalRowsToStore", totalRowsToStore);
-            updateHistoryMap.put("totalRowsToRemove", totalRowsToRemove);
-            updateHistoryMap.put("perSplitMinMillis", perSplitMinMillis);
-            updateHistoryMap.put("perSplitMaxMillis", perSplitMaxMillis);
-            updateHistoryMap.put("perSplitMinItems", perSplitMinItems);
-            updateHistoryMap.put("perSplitMaxItems", perSplitMaxItems);
-            updateHistoryMap.put("userLogin", userLogin);
-            Map<String, Object> updateEsHistRunResult = dispatcher.runSync("updateEntitySyncHistory", updateHistoryMap);
+            GenericValue entitySyncHistory = EntityQuery.use(delegator).from("EntitySyncHistory").where("startDate",startDate, "entitySyncId", entitySyncId).queryOne();
+            if(entitySyncHistory != null) {
+                // store result of service call on history with results so far, should run in own tx
+                ModelService model = dispatcher.getDispatchContext().getModelService("updateEntitySyncHistory");
+                Map<String, Object> updateHistoryMap = model.makeValid(entitySyncHistory, ModelService.IN_PARAM);
 
-            // now we have updated EntitySync and EntitySyncHistory, check both ops for errors...
-            if (ServiceUtil.isError(updateEsRunResult)) {
-                String errorMsg = "Error running EntitySync [" + entitySyncId + "], update of EntitySync record with lastSuccessfulSynchTime failed.";
-                throw new SyncDataErrorException(errorMsg, null, null, updateEsRunResult, null);
+                updateHistoryMap.put("lastSuccessfulSynchTime", this.currentRunEndTime);
+                updateHistoryMap.put("lastCandidateEndTime", this.getNextRunEndTime());
+                updateHistoryMap.put("lastSplitStartTime", Long.valueOf(this.splitStartTime));
+                updateHistoryMap.put("toCreateInserted", Long.valueOf(toCreateInserted));
+                updateHistoryMap.put("toCreateUpdated", Long.valueOf(toCreateUpdated));
+                updateHistoryMap.put("toCreateNotUpdated", Long.valueOf(toCreateNotUpdated));
+                updateHistoryMap.put("toStoreInserted", Long.valueOf(toStoreInserted));
+                updateHistoryMap.put("toStoreUpdated", Long.valueOf(toStoreUpdated));
+                updateHistoryMap.put("toStoreNotUpdated", Long.valueOf(toStoreNotUpdated));
+                updateHistoryMap.put("toRemoveDeleted", Long.valueOf(toRemoveDeleted));
+                updateHistoryMap.put("toRemoveAlreadyDeleted", Long.valueOf(toRemoveAlreadyDeleted));
+                updateHistoryMap.put("runningTimeMillis", Long.valueOf(runningTimeMillis));
+                updateHistoryMap.put("totalStoreCalls", Long.valueOf(totalStoreCalls));
+                updateHistoryMap.put("totalSplits", Long.valueOf(totalSplits));
+                updateHistoryMap.put("totalRowsExported", Long.valueOf(totalRowsExported));
+                updateHistoryMap.put("totalRowsToCreate", Long.valueOf(totalRowsToCreate));
+                updateHistoryMap.put("totalRowsToStore", Long.valueOf(totalRowsToStore));
+                updateHistoryMap.put("totalRowsToRemove", Long.valueOf(totalRowsToRemove));
+                updateHistoryMap.put("perSplitMinMillis", Long.valueOf(perSplitMinMillis));
+                updateHistoryMap.put("perSplitMaxMillis", Long.valueOf(perSplitMaxMillis));
+                updateHistoryMap.put("perSplitMinItems", Long.valueOf(perSplitMinItems));
+                updateHistoryMap.put("perSplitMaxItems", Long.valueOf(perSplitMaxItems));
+                updateHistoryMap.put("userLogin", userLogin);
+                Map<String, Object> updateEsHistRunResult = dispatcher.runSync("updateEntitySyncHistory", updateHistoryMap);
+
+                // now we have updated EntitySync and EntitySyncHistory, check both ops for errors...
+                if (ServiceUtil.isError(updateEsRunResult)) {
+                    String errorMsg = "Error running EntitySync [" + entitySyncId + "], update of EntitySync record with lastSuccessfulSynchTime failed.";
+                    throw new SyncDataErrorException(errorMsg, null, null, updateEsRunResult, null);
+                }
+
+
+                if (ServiceUtil.isError(updateEsHistRunResult)) {
+                    String errorMsg = "Error running EntitySync [" + entitySyncId + "], update of EntitySyncHistory (startDate:[" + startDate + "]) record with lastSuccessfulSynchTime and result stats failed.";
+                    throw new SyncDataErrorException(errorMsg, null, null, updateEsHistRunResult, null);
+                }
             }
 
-            if (ServiceUtil.isError(updateEsHistRunResult)) {
-                String errorMsg = "Error running EntitySync [" + entitySyncId + "], update of EntitySyncHistory (startDate:[" + startDate + "]) record with lastSuccessfulSynchTime and result stats failed.";
-                throw new SyncDataErrorException(errorMsg, null, null, updateEsHistRunResult, null);
-            }
-        } catch (GenericServiceException e) {
+        } catch (GenericServiceException | GenericEntityException e) {
             throw new SyncServiceErrorException("Error saving results reported from data store", e);
         }
     }
@@ -818,7 +832,7 @@ public class EntitySyncContext {
         // the lastSuccessfulSynchTime on EntitySync will already be set, so just set status as completed
         String esErrMsg = "Could not mark Entity Sync as complete, but all synchronization was successful";
         try {
-            Map<String, Object> completeEntitySyncRes = dispatcher.runSync("updateEntitySyncRunning", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", newStatusId, "userLogin", userLogin));
+            Map<String, Object> completeEntitySyncRes = dispatcher.runSync("updateEntitySync", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", newStatusId, "userLogin", userLogin), 60,true);
             if (ServiceUtil.isError(completeEntitySyncRes)) {
                 // what to do here? try again?
                 throw new SyncDataErrorException(esErrMsg, null, null, completeEntitySyncRes, null);
@@ -911,7 +925,7 @@ public class EntitySyncContext {
     public void saveSyncErrorInfo(String runStatusId, List<Object> errorMessages) {
         // set error statuses on the EntitySync and EntitySyncHistory entities
         try {
-            Map<String, Object> errorEntitySyncRes = dispatcher.runSync("updateEntitySyncRunning", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", runStatusId, "userLogin", userLogin));
+            Map<String, Object> errorEntitySyncRes = dispatcher.runSync("updateEntitySync", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", runStatusId, "userLogin", userLogin), 60,true);
             if (ServiceUtil.isError(errorEntitySyncRes)) {
                 errorMessages.add("Could not save error run status [" + runStatusId + "] on EntitySync with ID [" + entitySyncId + "]: " + errorEntitySyncRes.get(ModelService.ERROR_MESSAGE));
             }
@@ -945,7 +959,7 @@ public class EntitySyncContext {
         try {
             // not running, get started NOW
             // set running status on entity sync, run in its own tx
-            Map<String, Object> startEntitySyncRes = dispatcher.runSync("updateEntitySyncRunning", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", "ESR_RUNNING", "userLogin", userLogin));
+            Map<String, Object> startEntitySyncRes = dispatcher.runSync("updateEntitySync", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", "ESR_RUNNING", "userLogin", userLogin), 60,true);
             if (ModelService.RESPOND_ERROR.equals(startEntitySyncRes.get(ModelService.RESPONSE_MESSAGE))) {
                 throw new SyncDataErrorException(markErrorMsg, null, null, startEntitySyncRes, null);
             }
@@ -977,6 +991,11 @@ public class EntitySyncContext {
             }
             String serviceErrorMsg = "Error running EntitySync [" + entitySyncId + "], call to store service [" + targetServiceName + "] failed.";
             try {
+
+                //TODO: It should use authentic user instead of system, think on alternate solution
+                GenericValue userLogin = EntityQuery.use(delegator).from("UserLogin").where("userLoginId", "system").queryOne();
+                targetServiceMap.put("userLogin", userLogin);
+
                 Map<String, Object> remoteStoreResult = dispatcher.runSync(targetServiceName, targetServiceMap);
                 if (ServiceUtil.isError(remoteStoreResult)) {
                     throw new SyncOtherErrorException(serviceErrorMsg, null, null, remoteStoreResult, null);
@@ -1001,7 +1020,7 @@ public class EntitySyncContext {
                 this.toStoreNotUpdated += toStoreNotUpdatedCur;
                 this.toRemoveDeleted += toRemoveDeletedCur;
                 this.toRemoveAlreadyDeleted += toRemoveAlreadyDeletedCur;
-            } catch (GenericServiceException e) {
+            } catch (GenericServiceException | GenericEntityException e) {
                 throw new SyncServiceErrorException(serviceErrorMsg, e);
             }
         }
@@ -1020,7 +1039,7 @@ public class EntitySyncContext {
             try {
                 // not running, get started NOW
                 // set running status on entity sync, run in its own tx
-                Map<String, Object> startEntitySyncRes = dispatcher.runSync("updateEntitySyncRunning", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", "ESR_RUNNING", "userLogin", userLogin));
+                Map<String, Object> startEntitySyncRes = dispatcher.runSync("updateEntitySync", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", "ESR_RUNNING", "userLogin", userLogin),60,true);
                 if (ModelService.RESPOND_ERROR.equals(startEntitySyncRes.get(ModelService.RESPONSE_MESSAGE))) {
                     throw new SyncDataErrorException(markErrorMsg, null, null, startEntitySyncRes, null);
                 }
@@ -1092,7 +1111,7 @@ public class EntitySyncContext {
         try {
             // not running, get started NOW
             // set running status on entity sync, run in its own tx
-            Map<String, Object> startEntitySyncRes = dispatcher.runSync("updateEntitySyncRunning", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", "ESR_RUNNING", "preOfflineSynchTime", this.lastSuccessfulSynchTime, "userLogin", userLogin));
+            Map<String, Object> startEntitySyncRes = dispatcher.runSync("updateEntitySync", UtilMisc.toMap("entitySyncId", entitySyncId, "runStatusId", "ESR_RUNNING", "preOfflineSynchTime", this.lastSuccessfulSynchTime, "userLogin", userLogin),60,true);
             if (ModelService.RESPOND_ERROR.equals(startEntitySyncRes.get(ModelService.RESPONSE_MESSAGE))) {
                 throw new SyncDataErrorException(markErrorMsg, null, null, startEntitySyncRes, null);
             }
