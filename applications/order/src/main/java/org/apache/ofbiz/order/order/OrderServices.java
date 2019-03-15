@@ -547,6 +547,14 @@ public class OrderServices {
         if (userLogin != null && userLogin.get("userLoginId") != null) {
             orderHeader.set("createdBy", userLogin.getString("userLoginId"));
         }
+        
+        if (UtilValidate.isNotEmpty(context.get("isRushOrder"))) {
+            orderHeader.set("isRushOrder", context.get("isRushOrder"));
+        }
+        
+        if (UtilValidate.isNotEmpty(context.get("priority"))) {
+            orderHeader.set("priority", context.get("priority"));
+        }
 
         String invoicePerShipment = EntityUtilProperties.getPropertyValue("accounting","create.invoice.per.shipment", delegator);
         if (UtilValidate.isNotEmpty(invoicePerShipment)) {
